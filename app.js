@@ -1,6 +1,9 @@
 'use strict';
 
 const STORAGE_KEY = 'keshi-work-tracker-v1';
+const SYNC_KEY = 'keshi-work-tracker-sync-v1';
+const GIST_DESCRIPTION = '科室工作推进登记-数据同步';
+const GIST_FILE = 'keshi-work-tracker.json';
 
 const STATUSES = [
   { id: 'pending', label: '待启动', css: 'pending' },
@@ -46,6 +49,11 @@ const ICONS = {
   'arrow-left': '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   'edit': '<path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>',
   'flag': '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
+  'cloud': '<path d="M17.5 19a4.5 4.5 0 0 0 .42-8.98 7 7 0 0 0-13.2 2.16A4.5 4.5 0 0 0 6.5 19z"/>',
+  'cloud-off': '<path d="M4.9 4.9A4.7 4.7 0 0 0 4 7.5 4.5 4.5 0 0 0 6.5 19h11a4.5 4.5 0 0 0 .9-8.9"/><path d="M3 3l18 18"/>',
+  'refresh': '<path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/>',
+  'unlink': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  'key': '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2"/><path d="M17 6l3 3"/>',
 };
 
 function icon(name) {
@@ -142,15 +150,239 @@ function loadItems() {
   }
 }
 
-function saveItems() {
+function saveItems(skipSync) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch (err) {
     toast('当前浏览器无法本地保存，请及时导出数据备份');
   }
+  if (!skipSync) scheduleSync();
+}
+
+function loadSyncConfig() {
+  try {
+    const raw = localStorage.getItem(SYNC_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data.token !== 'string' || !data.token) return null;
+    return {
+      token: data.token,
+      gistId: typeof data.gistId === 'string' ? data.gistId : null,
+      login: typeof data.login === 'string' ? data.login : '',
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+function persistSyncConfig() {
+  try {
+    localStorage.setItem(SYNC_KEY, JSON.stringify(syncConfig));
+  } catch (err) {
+    toast('同步配置无法保存到本地');
+  }
+}
+
+function clearSyncConfig() {
+  try {
+    localStorage.removeItem(SYNC_KEY);
+  } catch (err) {
+    // ignore
+  }
+  syncConfig = null;
+}
+
+function syncPayload() {
+  return {
+    app: '科室工作推进登记',
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    items,
+  };
+}
+
+function parseSyncPayload(text) {
+  try {
+    const data = JSON.parse(text);
+    const list = Array.isArray(data) ? data : data && data.items;
+    if (!Array.isArray(list)) return [];
+    return list.map(normalizeItem).filter(Boolean);
+  } catch (err) {
+    return [];
+  }
+}
+
+function mergeSyncItems(localList, remoteList) {
+  const map = new Map();
+  localList.forEach((item) => map.set(item.id, item));
+  remoteList.forEach((item) => {
+    const current = map.get(item.id);
+    if (!current) {
+      map.set(item.id, item);
+    } else if (String(item.updatedAt || '') > String(current.updatedAt || '')) {
+      map.set(item.id, item);
+    }
+  });
+  return Array.from(map.values());
+}
+
+async function githubFetch(path, options) {
+  const token = syncConfig && syncConfig.token;
+  if (!token) throw new Error('no-token');
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: 'token ' + token,
+    'Content-Type': 'application/json',
+  };
+  const res = await fetch('https://api.github.com' + path, Object.assign({
+    method: 'GET',
+    headers,
+  }, options || {}));
+  if (res.status === 401) throw new Error('unauthorized');
+  if (res.status === 404) throw new Error('not-found');
+  if (!res.ok) {
+    let message = 'HTTP ' + res.status;
+    try {
+      const body = await res.json();
+      if (body && body.message) message = body.message;
+    } catch (err) {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+async function connectSync(token) {
+  syncConfig = {
+    token: String(token || '').trim(),
+    gistId: null,
+    login: '',
+  };
+  if (!syncConfig.token) throw new Error('token-empty');
+  const user = await githubFetch('/user');
+  syncConfig.login = user.login || '';
+  let gistId = null;
+  const gists = await githubFetch('/gists?per_page=100');
+  const existing = gists.find((g) => !g.public && g.description === GIST_DESCRIPTION);
+  if (existing) {
+    gistId = existing.id;
+  }
+  if (!gistId) {
+    const created = await githubFetch('/gists', {
+      method: 'POST',
+      body: JSON.stringify({
+        description: GIST_DESCRIPTION,
+        public: false,
+        files: {
+          [GIST_FILE]: {
+            content: JSON.stringify(syncPayload(), null, 2),
+          },
+        },
+      }),
+    });
+    gistId = created.id;
+  }
+  syncConfig.gistId = gistId;
+  persistSyncConfig();
+  await syncPush();
+  return syncConfig;
+}
+
+async function syncPush() {
+  if (!syncConfig || !syncConfig.token) return;
+  if (!syncConfig.gistId) {
+    await connectSync(syncConfig.token);
+    return;
+  }
+  await githubFetch('/gists/' + encodeURIComponent(syncConfig.gistId), {
+    method: 'PATCH',
+    body: JSON.stringify({
+      files: {
+        [GIST_FILE]: {
+          content: JSON.stringify(syncPayload(), null, 2),
+        },
+      },
+    }),
+  });
+}
+
+async function syncPull() {
+  if (!syncConfig || !syncConfig.token) return;
+  if (!syncConfig.gistId) {
+    await connectSync(syncConfig.token);
+    return;
+  }
+  const gist = await githubFetch('/gists/' + encodeURIComponent(syncConfig.gistId));
+  const file = gist.files && gist.files[GIST_FILE];
+  if (!file || typeof file.content !== 'string') return;
+  const remote = parseSyncPayload(file.content);
+  const merged = mergeSyncItems(items, remote);
+  const changed = merged.length !== items.length || merged.some((item, index) => item.updatedAt !== items[index].updatedAt);
+  if (changed) {
+    items = merged;
+    saveItems(true);
+    render();
+  }
+  await syncPush();
+}
+
+async function syncNow() {
+  if (syncBusy) return;
+  syncBusy = true;
+  setSyncBusyUI(true);
+  try {
+    await syncPull();
+    updateSyncStatus();
+    toast('同步完成');
+  } catch (err) {
+    updateSyncStatus(err);
+    toast('同步失败：' + err.message);
+  } finally {
+    syncBusy = false;
+    setSyncBusyUI(false);
+  }
+}
+
+function scheduleSync() {
+  if (!syncConfig || !syncConfig.token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncPush().catch((err) => {
+      if (err && err.message !== 'no-token') toast('同步失败：' + err.message);
+    });
+  }, 1200);
+}
+
+function updateSyncStatus(err) {
+  const statusEl = $('#syncStatus');
+  const textEl = $('#syncStatusText');
+  const disconnectBtn = $('#syncDisconnectBtn');
+  if (!statusEl || !textEl) return;
+  statusEl.classList.remove('ok', 'err');
+  if (err) {
+    statusEl.classList.add('err');
+    textEl.textContent = '同步异常：' + err.message;
+  } else if (syncConfig && syncConfig.token) {
+    statusEl.classList.add('ok');
+    textEl.textContent = '已连接' + (syncConfig.login ? '：' + syncConfig.login : '');
+  } else {
+    textEl.textContent = '未连接';
+  }
+  if (disconnectBtn) disconnectBtn.hidden = !syncConfig;
+}
+
+function setSyncBusyUI(busy) {
+  const saveBtn = $('#syncSaveBtn');
+  const nowBtn = $('#syncNowBtn');
+  if (saveBtn) saveBtn.disabled = busy;
+  if (nowBtn) nowBtn.disabled = busy;
 }
 
 let items = loadItems();
+let syncConfig = loadSyncConfig();
+let syncTimer = null;
+let syncBusy = false;
 let filter = {
   year: String(new Date().getFullYear()),
   status: 'all',
@@ -352,6 +584,19 @@ function closeForm() {
   $('#modalBackdrop').hidden = true;
   document.body.style.overflow = '';
   editingId = null;
+}
+
+function openSyncModal() {
+  $('#syncToken').value = syncConfig ? syncConfig.token : '';
+  updateSyncStatus();
+  $('#syncBackdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+  $('#syncToken').focus();
+}
+
+function closeSyncModal() {
+  $('#syncBackdrop').hidden = true;
+  document.body.style.overflow = '';
 }
 
 function addEntryRow(entry) {
@@ -753,6 +998,42 @@ function toast(message) {
 function bindEvents() {
   $('#addBtn').addEventListener('click', () => openForm(null));
   $('#emptyAddBtn').addEventListener('click', () => openForm(null));
+  $('#syncBtn').addEventListener('click', openSyncModal);
+  $('#closeSyncBtn').addEventListener('click', closeSyncModal);
+  $('#syncBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#syncBackdrop')) closeSyncModal();
+  });
+  $('#syncSaveBtn').addEventListener('click', async () => {
+    if (syncBusy) return;
+    const token = $('#syncToken').value.trim();
+    if (!token) {
+      toast('请输入 GitHub Token');
+      return;
+    }
+    syncBusy = true;
+    setSyncBusyUI(true);
+    try {
+      await connectSync(token);
+      updateSyncStatus();
+      toast('已连接并同步');
+    } catch (err) {
+      updateSyncStatus(err);
+      toast('连接失败：' + err.message);
+      syncConfig = null;
+      clearSyncConfig();
+    } finally {
+      syncBusy = false;
+      setSyncBusyUI(false);
+    }
+  });
+  $('#syncNowBtn').addEventListener('click', syncNow);
+  $('#syncDisconnectBtn').addEventListener('click', () => {
+    if (window.confirm('确定断开云端同步吗？本地数据会保留。')) {
+      clearSyncConfig();
+      updateSyncStatus();
+      toast('已断开同步');
+    }
+  });
   $('#reportBtn').addEventListener('click', showReport);
   $('#backBtn').addEventListener('click', showMain);
   $('#closeModalBtn').addEventListener('click', closeForm);
@@ -833,6 +1114,7 @@ function bindEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('#modalBackdrop').hidden) closeForm();
+    if (e.key === 'Escape' && !$('#syncBackdrop').hidden) closeSyncModal();
     if (e.key === 'Escape') dataMenu.hidden = true;
   });
 }
@@ -841,6 +1123,12 @@ function init() {
   injectIcons();
   bindEvents();
   render();
+  updateSyncStatus();
+  if (syncConfig && syncConfig.token) {
+    syncPull().catch(() => {
+      // ignore background sync errors on load
+    });
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

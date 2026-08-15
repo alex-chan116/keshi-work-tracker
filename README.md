@@ -17,6 +17,15 @@
 
 在线使用时，数据保存在当前设备的浏览器本地。电脑和手机的数据相互独立，换设备后可在“数据 → 导入数据”中恢复备份。
 
+## 自动同步（私有 Gist）
+
+1. 打开 GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)。
+2. 点击 Generate new token (classic)，勾选 `gist` 权限后生成。
+3. 复制 Token，在工具顶部点击“同步”，粘贴并点击“保存并连接”。
+4. 手机打开同一个网页，重复第 3 步并点击“立即同步”，即可双向同步数据。
+
+Token 只保存在当前设备的浏览器本地，不会写入仓库或公开网页。
+
 ## 记录内容
 
 - 开展日期、事项内容、负责人

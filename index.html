@@ -20,6 +20,9 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <button class="btn btn-ghost" id="syncBtn" type="button" title="云端同步">
+          <span data-icon="cloud"></span><span class="btn-label">同步</span>
+        </button>
         <button class="btn btn-ghost" id="reportBtn" type="button" title="年度总结">
           <span data-icon="file-text"></span><span class="btn-label">年度总结</span>
         </button>
@@ -173,6 +176,39 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="syncBackdrop" hidden>
+    <div class="modal modal-small" role="dialog" aria-modal="true" aria-labelledby="syncTitle">
+      <div class="modal-header">
+        <h2 id="syncTitle">云端同步</h2>
+        <button class="icon-btn" id="closeSyncBtn" type="button" aria-label="关闭" title="关闭">
+          <span data-icon="x"></span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="syncToken">GitHub Token</label>
+          <input id="syncToken" type="password" placeholder="ghp_..." autocomplete="off">
+        </div>
+        <div class="sync-status" id="syncStatus">
+          <span data-icon="cloud-off"></span>
+          <span id="syncStatusText">未连接</span>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-danger-outline" id="syncDisconnectBtn" type="button" hidden>
+            <span data-icon="unlink"></span><span>断开</span>
+          </button>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost" id="syncNowBtn" type="button">
+            <span data-icon="refresh"></span><span>立即同步</span>
+          </button>
+          <button class="btn btn-primary" id="syncSaveBtn" type="button">
+            <span data-icon="cloud"></span><span>保存并连接</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -939,6 +939,10 @@ main {
   overflow-y: auto;
 }
 
+.modal-small {
+  width: min(520px, 100%);
+}
+
 .modal {
   width: min(720px, 100%);
   max-height: calc(100vh - 40px);
@@ -1089,6 +1093,53 @@ main {
   margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+}
+
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--text-2);
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.sync-status svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.sync-status.ok {
+  background: var(--green-soft);
+  border-color: #bfe3c8;
+  color: var(--green);
+}
+
+.sync-status.ok svg {
+  color: var(--green);
+}
+
+.sync-status.err {
+  background: var(--red-soft);
+  border-color: #f0c4c4;
+  color: var(--red);
+}
+
+.sync-status.err svg {
+  color: var(--red);
+}
+
+.btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .spacer {
